@@ -29,7 +29,7 @@ np.random.seed(seed=12345)
 
 
 class CycleGAN():
-    def __init__(self, lr_D=2e-4, lr_G=2e-3, image_shape=(182, 218, 182, 1), #image_shape=(304, 256, 1),
+    def __init__(self, lr_D=2e-3, lr_G=2e-3, image_shape=(92, 112, 92, 1), #image_shape=(304, 256, 1),
                  date_time_string_addition='', image_folder='MR_3D'):
         self.img_shape = image_shape
         self.channels = self.img_shape[-1]
@@ -44,8 +44,8 @@ class CycleGAN():
         self.discriminator_iterations = 1  # Number of generator training iterations in each training loop
         self.beta_1 = 0.5
         self.beta_2 = 0.999
-        self.batch_size = 123
-        self.epochs = 200  # choose multiples of 25 since the models are save each 25th epoch
+        self.batch_size = 2
+        self.epochs = 100  # choose multiples of 25 since the models are save each 25th epoch
         self.save_interval = 1
         self.synthetic_pool_size = 50
 
@@ -92,7 +92,7 @@ class CycleGAN():
             D_A = self.modelDiscriminator()
             D_B = self.modelDiscriminator()
             loss_weights_D = [0.5]  # 0.5 since we train on real and synthetic images
-        # D_A.summary()
+        D_A.summary()
 
         # Discriminator builds
         image_A = Input(shape=self.img_shape)
@@ -123,7 +123,8 @@ class CycleGAN():
         # Generators
         self.G_A2B = self.modelGenerator(name='G_A2B_model')
         self.G_B2A = self.modelGenerator(name='G_B2A_model')
-        # self.G_A2B.summary()
+        self.G_A2B.summary()
+        self.G_B2A.summary()
 
         if self.use_identity_learning:
             self.G_A2B.compile(optimizer=self.opt_G, loss='MAE')
@@ -194,7 +195,7 @@ class CycleGAN():
             nr_A_train_imgs = 0
             nr_B_train_imgs = 0
 
-        data = load_volumes.load_data(nr_of_channels=self.channels,
+        data = load_data.load_data(nr_of_channels=self.channels,
                                    batch_size=self.batch_size,
                                    nr_A_train_imgs=nr_A_train_imgs,
                                    nr_B_train_imgs=nr_B_train_imgs,
@@ -202,12 +203,25 @@ class CycleGAN():
                                    nr_B_test_imgs=nr_B_test_imgs,
                                    subfolder=image_folder)
 
-        self.A_train = data["trainA_images"]
-        self.B_train = data["trainB_images"]
-        self.A_test = data["testA_images"]
-        self.B_test = data["testB_images"]
-        self.testA_image_names = data["testA_image_names"]
-        self.testB_image_names = data["testB_image_names"]
+        self.A_train = data["train_A_images"]
+        X = data["train_A_images"]
+        print("A_train shape")
+        print(X.shape)
+        Y = data["train_B_images"]
+        print("B_train shape")
+        print(Y.shape)
+        Z = data["test_A_images"]
+        print("A_test shape")
+        print(Z.shape)
+        W = data["test_B_images"]
+        print("B_train shape")
+        print(W.shape)
+
+        self.B_train = data["train_B_images"]
+        self.A_test = data["test_A_images"]
+        self.B_test = data["test_B_images"]
+        self.testA_image_names = data["test_A_image_names"]
+        self.testB_image_names = data["test_B_image_names"]
         if not self.use_data_generator:
             print('Data has been loaded')
 
@@ -281,7 +295,7 @@ class CycleGAN():
     def uk(self, x, k):
         # (up sampling followed by 1x1 convolution <=> fractional-strided 1/2)
         if self.use_resize_convolution:
-            x = UpSampling3D(size=(2, 2))(x)  # Nearest neighbor upsampling
+            x = UpSampling3D(size=(2, 2, 2))(x)  # Nearest neighbor upsampling
             x = ReflectionPadding3D((1, 1, 1))(x)
             x = Conv3D(filters=k, kernel_size=3, strides=1, padding='valid')(x)
         else:
@@ -295,7 +309,7 @@ class CycleGAN():
 
     def modelMultiScaleDiscriminator(self, name=None):
         x1 = Input(shape=self.img_shape)
-        x2 = AveragePooling3D(pool_size=(2, 2))(x1)
+        x2 = AveragePooling3D(pool_size=(2, 2, 2))(x1)
         #x4 = AveragePooling3D(pool_size=(2, 2))(x2)
 
         out_x1 = self.modelDiscriminator('D1')(x1)
@@ -328,7 +342,7 @@ class CycleGAN():
         # Specify input
         input_img = Input(shape=self.img_shape)
         # Layer 1
-        x = ReflectionPadding2D((3, 3))(input_img)
+        x = ReflectionPadding3D((3, 3, 3))(input_img)
         x = self.c7Ak(x, 32)
         # Layer 2
         x = self.dk(x, 64)
@@ -351,7 +365,7 @@ class CycleGAN():
         x = self.uk(x, 64)
         # Layer 14
         x = self.uk(x, 32)
-        x = ReflectionPadding2D((3, 3))(x)
+        x = ReflectionPadding3D((3, 3, 3))(x)
         x = Conv3D(self.channels, kernel_size=7, strides=1)(x)
         x = Activation('tanh')(x)  # They say they use Relu but really they do not
         return Model(inputs=input_img, outputs=x, name=name)
@@ -397,6 +411,7 @@ class CycleGAN():
             synthetic_images_A = self.G_B2A.predict(real_images_B)
             synthetic_images_A = synthetic_pool_A.query(synthetic_images_A)
             synthetic_images_B = synthetic_pool_B.query(synthetic_images_B)
+            print('synthetic images A shape: ', synthetic_images_A.shape)
 
             for _ in range(self.discriminator_iterations):
                 DA_loss_real = self.D_A.train_on_batch(x=real_images_A, y=ones)
@@ -619,7 +634,7 @@ class CycleGAN():
 
             if epoch % save_interval == 0:
                 print('\n', '\n', '-------------------------Saving images for epoch', epoch, '-------------------------', '\n', '\n')
-                self.saveImages(epoch, real_images_A, real_images_B)
+                #self.saveImages(epoch, real_images_A, real_images_B)
 
             if epoch % 20 == 0:
                 # self.saveModel(self.G_model)
@@ -896,7 +911,7 @@ class ReflectionPadding3D(Layer):
         super(ReflectionPadding3D, self).__init__(**kwargs)
 
     def compute_output_shape(self, s):
-        return (s[0], s[1] + 2 * self.padding[0], s[2] + 2 * self.padding[1], s[3] + 2 * self.padding[2], s[3])
+        return (s[0], s[1] + 2 * self.padding[0], s[2] + 2 * self.padding[1], s[3] + 2 * self.padding[2], s[4])
 
     def call(self, x, mask=None):
         w_pad, h_pad, d_pad = self.padding
@@ -915,8 +930,8 @@ class ImagePool():
             return images
         return_images = []
         for image in images:
-            if len(image.shape) == 3:
-                image = image[np.newaxis, :, :, :]
+            if len(image.shape) == 4:
+                image = image[np.newaxis, :, :, :, :]
 
             if self.num_imgs < self.pool_size:  # fill up the image pool
                 self.num_imgs = self.num_imgs + 1
