@@ -16,16 +16,16 @@ def load_data(nr_of_channels, batch_size=1,
     test_A_path = os.path.join('data', subfolder, 'testA')
     test_B_path = os.path.join('data', subfolder, 'testB')
 
-    train_A_image_names = os.listdir(train_A_path)
-    train_B_image_names = os.listdir(train_B_path)
-    test_A_image_names = os.listdir(test_A_path)
-    test_B_image_names = os.listdir(test_B_path)
+    train_A_image_names = sorted(os.listdir(train_A_path))
+    train_B_image_names = sorted(os.listdir(train_B_path))
+    test_A_image_names = sorted(os.listdir(test_A_path))
+    test_B_image_names = sorted(os.listdir(test_B_path))
 
     print(train_A_image_names)
 
 
     if generator:
-        return data_sequence(trainA_path, trainB_path, trainA_image_names, trainB_image_names, batch_size=batch_size)  # D_model, use_multiscale_discriminator, use_supervised_learning, REAL_LABEL)
+        return data_sequence(train_A_path, train_B_path, train_A_image_names, train_B_image_names, nr_of_channels, batch_size=batch_size)  # D_model, use_multiscale_discriminator, use_supervised_learning, REAL_LABEL)
     else:
         train_A_images = create_image_array(train_A_image_names, train_A_path, nr_of_channels)
         train_B_images = create_image_array(train_B_image_names, train_B_path, nr_of_channels)
@@ -66,14 +66,15 @@ def create_image_array(image_list, image_path, nr_of_channels):
   
   # If using 16 bit depth images, use the formula 'array = array / 32767.5 - 1' instead
 def normalize_array(array):
-    array = (array - array.min())/(array.max() - array.min())
-    array = array / 127.5 - 1
+    array = 2*(array - array.min())/(array.max() - array.min()) - 1
+
+    #array = array / 127.5 - 1
     return array
 
 
 class data_sequence(Sequence):
 
-    def __init__(self, trainA_path, trainB_path, image_list_A, image_list_B, batch_size=1):  # , D_model, use_multiscale_discriminator, use_supervised_learning, REAL_LABEL):
+    def __init__(self, trainA_path, trainB_path, image_list_A, image_list_B, nr_of_channels, batch_size=1):  # , D_model, use_multiscale_discriminator, use_supervised_learning, REAL_LABEL):
         self.batch_size = batch_size
         self.train_A = []
         self.train_B = []
@@ -107,8 +108,8 @@ class data_sequence(Sequence):
             batch_A = self.train_A[idx * self.batch_size:(idx + 1) * self.batch_size]
             batch_B = self.train_B[idx * self.batch_size:(idx + 1) * self.batch_size]
 
-        real_images_A = create_image_array(batch_A, '', 3)
-        real_images_B = create_image_array(batch_B, '', 3)
+        real_images_A = create_image_array(batch_A, trainA_path, nr_of_channels)
+        real_images_B = create_image_array(batch_B, trainB_path, nr_of_channels)
 
         return real_images_A, real_images_B  # input_data, target_data
 
