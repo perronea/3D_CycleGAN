@@ -22,15 +22,16 @@ import os
 
 import keras.backend as K
 import tensorflow as tf
+import nibabel as nib
 
 import load_data
 
-np.random.seed(seed=12345)
+np.random.seed(seed=12346)
 
 
 class CycleGAN():
-    def __init__(self, lr_D=2e-3, lr_G=2e-3, image_shape=(92, 112, 92, 1), #image_shape=(304, 256, 1),
-                 date_time_string_addition='', image_folder='MR_3D'):
+    def __init__(self, lr_D=2e-4, lr_G=2e-4, image_shape=(92, 112, 92, 1), #image_shape=(304, 256, 1),
+                 date_time_string_addition='', image_folder='MR_3D50'):
         self.img_shape = image_shape
         self.channels = self.img_shape[-1]
         self.normalization = InstanceNormalization
@@ -40,18 +41,18 @@ class CycleGAN():
         self.lambda_D = 1.0  # Weight for loss from discriminator guess on synthetic images
         self.learning_rate_D = lr_D
         self.learning_rate_G = lr_G
-        self.generator_iterations = 1  # Number of generator training iterations in each training loop
+        self.generator_iterations = 2  # Number of generator training iterations in each training loop
         self.discriminator_iterations = 1  # Number of generator training iterations in each training loop
         self.beta_1 = 0.5
         self.beta_2 = 0.999
-        self.batch_size = 2
-        self.epochs = 100  # choose multiples of 25 since the models are save each 25th epoch
+        self.batch_size = 1
+        self.epochs = 150  # choose multiples of 25 since the models are save each 25th epoch
         self.save_interval = 1
         self.synthetic_pool_size = 50
 
         # Linear decay of learning rate, for both discriminators and generators
         self.use_linear_decay = True
-        self.decay_epoch = 101  # The epoch where the linear decay of the learning rates start
+        self.decay_epoch = 75  # The epoch where the linear decay of the learning rates start
 
         # Identity loss - sometimes send images from B to G_A2B (and the opposite) to teach identity mappings
         self.use_identity_learning = True
@@ -68,7 +69,7 @@ class CycleGAN():
 
         # Supervised learning part - for MR images - comparison
         self.use_supervised_learning = True
-        self.supervised_weight = 20.0
+        self.supervised_weight = 40.0
 
         # Fetch data during training instead of pre caching all images - might be necessary for large datasets
         self.use_data_generator = False
@@ -102,8 +103,8 @@ class CycleGAN():
         self.D_A = Model(inputs=image_A, outputs=guess_A, name='D_A_model')
         self.D_B = Model(inputs=image_B, outputs=guess_B, name='D_B_model')
 
-        self.D_A.summary()
-        self.D_B.summary()
+        #self.D_A.summary()
+        #self.D_B.summary()
         self.D_A.compile(optimizer=self.opt_D,
                          loss=self.lse,
                          loss_weights=loss_weights_D)
@@ -172,7 +173,7 @@ class CycleGAN():
         self.G_model.compile(optimizer=self.opt_G,
                              loss=compile_losses,
                              loss_weights=compile_weights)
-        # self.G_A2B.summary()
+        self.G_A2B.summary()
 
         # ======= Data ==========
         # Use 'None' to fetch all available images
@@ -190,6 +191,14 @@ class CycleGAN():
         if self.use_data_generator:
             self.data_generator = load_data.load_data(
                 nr_of_channels=self.batch_size, generator=True, subfolder=image_folder)
+            
+            self.data_generator = load_data.load_data(nr_of_channels=self.channels,
+                                       batch_size=self.batch_size,
+                                       nr_A_train_imgs=nr_A_train_imgs,
+                                       nr_B_train_imgs=nr_B_train_imgs,
+                                       nr_A_test_imgs=nr_A_test_imgs,
+                                       nr_B_test_imgs=nr_B_test_imgs,
+                                       subfolder=image_folder)
 
             # Only store test images
             nr_A_train_imgs = 0
@@ -202,21 +211,16 @@ class CycleGAN():
                                    nr_A_test_imgs=nr_A_test_imgs,
                                    nr_B_test_imgs=nr_B_test_imgs,
                                    subfolder=image_folder)
+        X = data["train_A_images"]
+        print("A_train shape: ", X.shape)
+        Y = data["train_B_images"]
+        print("B_train shape: ", Y.shape)
+        Z = data["test_A_images"]
+        print("A_test shape: ", Z.shape)
+        W = data["test_B_images"]
+        print("B_train shape: ", W.shape)
 
         self.A_train = data["train_A_images"]
-        X = data["train_A_images"]
-        print("A_train shape")
-        print(X.shape)
-        Y = data["train_B_images"]
-        print("B_train shape")
-        print(Y.shape)
-        Z = data["test_A_images"]
-        print("A_test shape")
-        print(Z.shape)
-        W = data["test_B_images"]
-        print("B_train shape")
-        print(W.shape)
-
         self.B_train = data["train_B_images"]
         self.A_test = data["test_A_images"]
         self.B_test = data["test_B_images"]
@@ -253,8 +257,8 @@ class CycleGAN():
         # ======= Initialize training ==========
         sys.stdout.flush()
         #plot_model(self.G_A2B, to_file='GA2B_expanded_model_new.png', show_shapes=True)
-        #self.train(epochs=self.epochs, batch_size=self.batch_size, save_interval=self.save_interval)
-        self.load_model_and_generate_synthetic_images()
+        self.train(epochs=self.epochs, batch_size=self.batch_size, save_interval=self.save_interval)
+        #self.load_model_and_generate_synthetic_images()
 
 #===============================================================================
 # Architecture functions
@@ -343,15 +347,15 @@ class CycleGAN():
         input_img = Input(shape=self.img_shape)
         # Layer 1
         x = ReflectionPadding3D((3, 3, 3))(input_img)
-        x = self.c7Ak(x, 32)
+        x = self.c7Ak(x, 64)
         # Layer 2
-        x = self.dk(x, 64)
-        # Layer 3
         x = self.dk(x, 128)
+        # Layer 3
+        x = self.dk(x, 256)
 
         if self.use_multiscale_discriminator:
             # Layer 3.5
-            x = self.dk(x, 256)
+            x = self.dk(x, 512)
 
         # Layer 4-12: Residual layer
         for _ in range(4, 13):
@@ -362,9 +366,9 @@ class CycleGAN():
             x = self.uk(x, 128)
 
         # Layer 13
-        x = self.uk(x, 64)
+        x = self.uk(x, 128)
         # Layer 14
-        x = self.uk(x, 32)
+        x = self.uk(x, 64)
         x = ReflectionPadding3D((3, 3, 3))(x)
         x = Conv3D(self.channels, kernel_size=7, strides=1)(x)
         x = Activation('tanh')(x)  # They say they use Relu but really they do not
@@ -411,7 +415,6 @@ class CycleGAN():
             synthetic_images_A = self.G_B2A.predict(real_images_B)
             synthetic_images_A = synthetic_pool_A.query(synthetic_images_A)
             synthetic_images_B = synthetic_pool_B.query(synthetic_images_B)
-            print('synthetic images A shape: ', synthetic_images_A.shape)
 
             for _ in range(self.discriminator_iterations):
                 DA_loss_real = self.D_A.train_on_batch(x=real_images_A, y=ones)
@@ -557,8 +560,10 @@ class CycleGAN():
             if self.use_data_generator:
                 loop_index = 1
                 for images in self.data_generator:
+                    print(images)
                     real_images_A = images[0]
                     real_images_B = images[1]
+                    print(real_images_A)
                     if len(real_images_A.shape) == 3:
                         real_images_A = real_images_A[:, :, :, np.newaxis]
                         real_images_B = real_images_B[:, :, :, np.newaxis]
@@ -592,7 +597,7 @@ class CycleGAN():
                 if self.use_supervised_learning:
                     random_order_B = random_order_A
                 for loop_index in range(0, epoch_iterations, batch_size):
-                    if loop_index + batch_size >= min_nr_imgs:
+                    if batch_size >= min_nr_imgs:
                         # If all images soon are used for one domain,
                         # randomly pick from this domain
                         if len(A_train) <= len(B_train):
@@ -623,6 +628,8 @@ class CycleGAN():
                         indexes_B = random_order_B[loop_index:
                                                    loop_index + batch_size]
 
+                    print('idx_A', indexes_A)
+                    print('idx_B', indexes_B)
                     sys.stdout.flush()
                     real_images_A = A_train[indexes_A]
                     real_images_B = B_train[indexes_B]
@@ -634,7 +641,7 @@ class CycleGAN():
 
             if epoch % save_interval == 0:
                 print('\n', '\n', '-------------------------Saving images for epoch', epoch, '-------------------------', '\n', '\n')
-                #self.saveImages(epoch, real_images_A, real_images_B)
+                self.saveImages(epoch, real_images_A, real_images_B)
 
             if epoch % 20 == 0:
                 # self.saveModel(self.G_model)
@@ -670,23 +677,24 @@ class CycleGAN():
         return loss
 
     def truncateAndSave(self, real_, real, synthetic, reconstructed, path_name):
-        if len(real.shape) > 3:
+        if len(real.shape) > 4:
             real = real[0]
             synthetic = synthetic[0]
             reconstructed = reconstructed[0]
 
         # Append and save
         if real_ is not None:
-            if len(real_.shape) > 4:
+            if len(real_.shape) > 5:
                 real_ = real_[0]
             image = np.hstack((real_[0], real, synthetic, reconstructed))
         else:
             image = np.hstack((real, synthetic, reconstructed))
 
         if self.channels == 1:
-            image = image[:, :, 0]
+            image = image[:, :, :, 0]
 
-        toimage(image, cmin=-1, cmax=1).save(path_name)
+        nib.save(nib.Nifti1Image(image, np.eye(4)), path_name)
+        #toimage(image, cmin=-1, cmax=1).save(path_name)
 
     def saveImages(self, epoch, real_image_A, real_image_B, num_saved_images=1):
         directory = os.path.join('images', self.date_time)
@@ -725,15 +733,17 @@ class CycleGAN():
                     real_image_Ba = np.expand_dims(real_image_Ba, axis=0)
 
             synthetic_image_B = self.G_A2B.predict(real_image_A)
+            print('real B mean: ', real_image_B.mean(axis=2).mean(axis=1).mean())
+            print('synthetic B mean: ', synthetic_image_B.mean(axis=2).mean(axis=1).mean())
             synthetic_image_A = self.G_B2A.predict(real_image_B)
             reconstructed_image_A = self.G_B2A.predict(synthetic_image_B)
             reconstructed_image_B = self.G_A2B.predict(synthetic_image_A)
 
             self.truncateAndSave(real_image_Ab, real_image_A, synthetic_image_B, reconstructed_image_A,
-                                 'images/{}/{}/epoch{}_sample{}.png'.format(
+                                 'images/{}/{}/epoch{}_sample{}.nii.gz'.format(
                                      self.date_time, 'A' + testString, epoch, i))
             self.truncateAndSave(real_image_Ba, real_image_B, synthetic_image_A, reconstructed_image_B,
-                                 'images/{}/{}/epoch{}_sample{}.png'.format(
+                                 'images/{}/{}/epoch{}_sample{}.nii.gz'.format(
                                      self.date_time, 'B' + testString, epoch, i))
 
     def save_tmp_images(self, real_image_A, real_image_B, synthetic_image_A, synthetic_image_B):
@@ -746,7 +756,7 @@ class CycleGAN():
             reconstructed_images = np.vstack((reconstructed_image_A[0], reconstructed_image_B[0]))
 
             self.truncateAndSave(None, real_images, synthetic_images, reconstructed_images,
-                                 'images/{}/{}.png'.format(
+                                 'images/{}/{}.nii.gz'.format(
                                      self.date_time, 'tmp'))
         except: # Ignore if file is open
             pass
@@ -867,21 +877,22 @@ class CycleGAN():
 
         def save_image(image, name, domain):
             if self.channels == 1:
-                image = image[:, :, 0]
-            toimage(image, cmin=-1, cmax=1).save(os.path.join(
-                'generate_images', 'synthetic_images', domain, name))
+                image = image[:, :, :, 0]
+            nib.save(nib.Nifti1Image(image, np.eye(4)), os.path.join('generate_images', 'synthetic_images', domain, name))
+            #toimage(image, cmin=-1, cmax=1).save(os.path.join(
+             #   'generate_images', 'synthetic_images', domain, name))
 
         # Test A images
         for i in range(len(synthetic_images_A)):
             # Get the name from the image it was conditioned on
-            name = self.testB_image_names[i].strip('.png') + '_synthetic.png'
+            name = self.testB_image_names[i].strip('.nii.gz') + '_synthetic.nii.gz'
             synt_A = synthetic_images_A[i]
             save_image(synt_A, name, 'A')
 
         # Test B images
         for i in range(len(synthetic_images_B)):
             # Get the name from the image it was conditioned on
-            name = self.testA_image_names[i].strip('.png') + '_synthetic.png'
+            name = self.testA_image_names[i].strip('.nii.gz') + '_synthetic.nii.gz'
             synt_B = synthetic_images_B[i]
             save_image(synt_B, name, 'B')
 
