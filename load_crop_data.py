@@ -6,7 +6,7 @@ from keras.utils import Sequence
 #from skimage.io import imread
 
 
-def load_data(nr_of_channels, batch_size=1, 
+def load_data(img_shape, nr_of_channels, batch_size=1, 
               nr_A_train_imgs=None, nr_B_train_imgs=None,
               nr_A_test_imgs=None, nr_B_test_imgs=None,
               generator=False, D_model=None, use_multiscale_discriminator=False, use_supervised_learning=False, REAL_LABEL=1.0, subfolder='MR_3D'):
@@ -25,12 +25,12 @@ def load_data(nr_of_channels, batch_size=1,
 
 
     if generator:
-        return data_sequence(train_A_path, train_B_path, train_A_image_names, train_B_image_names, nr_of_channels, batch_size=batch_size)  # D_model, use_multiscale_discriminator, use_supervised_learning, REAL_LABEL)
+        return data_sequence(train_A_path, train_B_path, train_A_image_names, train_B_image_names, img_shape, nr_of_channels, batch_size=batch_size)  # D_model, use_multiscale_discriminator, use_supervised_learning, REAL_LABEL)
     else:
-        train_A_images = create_image_array(train_A_image_names, train_A_path, nr_of_channels)
-        train_B_images = create_image_array(train_B_image_names, train_B_path, nr_of_channels)
-        test_A_images = create_image_array(test_A_image_names, test_A_path, nr_of_channels)
-        test_B_images = create_image_array(test_B_image_names, test_B_path, nr_of_channels)
+        train_A_images = create_image_array(train_A_image_names, train_A_path, nr_of_channels, img_shape)
+        train_B_images = create_image_array(train_B_image_names, train_B_path, nr_of_channels, img_shape)
+        test_A_images = create_image_array(test_A_image_names, test_A_path, nr_of_channels, img_shape)
+        test_B_images = create_image_array(test_B_image_names, test_B_path, nr_of_channels, img_shape)
         return {"train_A_images": train_A_images,  "train_A_image_names": train_A_image_names,
                 "train_B_images": train_B_images,  "train_B_image_names": train_B_image_names,
                 "test_A_images": test_A_images,  "test_A_image_names": test_A_image_names,
@@ -39,16 +39,23 @@ def load_data(nr_of_channels, batch_size=1,
 }
 
 
-def create_image_array(image_list, image_path, nr_of_channels):
+def create_image_array(image_list, image_path, nr_of_channels, img_shape):
     image_array = []
     for image_name in image_list:
-        print(image_name)
+        #print(image_name)
         #if image_name[-1].lower() == 'g':  # to avoid e.g. thumbs.db files
         if nr_of_channels == 1:  # Gray scale image -> MR image
             #image = np.array(Image.open(os.path.join(image_path, image_name)))
             img = nib.load(os.path.join(image_path, image_name))
             image = img.get_fdata()
-            image = np.pad(image,((1,0),(3,0),(1,0)), mode='constant')
+            #print(image.shape)
+            x1_pad = int(np.floor((img_shape[0]-image.shape[0])/2))
+            x2_pad = int(np.ceil((img_shape[0]-image.shape[0])/2))
+            y1_pad = int(np.floor((img_shape[1]-image.shape[1])/2))
+            y2_pad = int(np.ceil((img_shape[1]-image.shape[1])/2))
+            z1_pad = int(np.floor((img_shape[2]-image.shape[2])/2))
+            z2_pad = int(np.ceil((img_shape[2]-image.shape[2])/2))
+            image = np.pad(image,((x1_pad,x2_pad),(y1_pad,y2_pad),(z1_pad,z2_pad)), mode='constant')
 
             image = image[:, :, :, np.newaxis]
 
@@ -74,16 +81,20 @@ def normalize_array(array):
 
 class data_sequence(Sequence):
 
-    def __init__(self, trainA_path, trainB_path, image_list_A, image_list_B, nr_of_channels, batch_size=1):  # , D_model, use_multiscale_discriminator, use_supervised_learning, REAL_LABEL):
+    def __init__(self, trainA_path, trainB_path, image_list_A, image_list_B, img_shape, nr_of_channels, batch_size=1):  # , D_model, use_multiscale_discriminator, use_supervised_learning, REAL_LABEL):
         self.batch_size = batch_size
-        self.train_A = []
-        self.train_B = []
-        for image_name in image_list_A:
-            if image_name[-1].lower() == 'g':  # to avoid e.g. thumbs.db files
-                self.train_A.append(os.path.join(trainA_path, image_name))
-        for image_name in image_list_B:
-            if image_name[-1].lower() == 'g':  # to avoid e.g. thumbs.db files
-                self.train_B.append(os.path.join(trainB_path, image_name))
+        self.train_A = image_list_A
+        self.train_B = image_list_B
+        self.trainA_path = trainA_path
+        self.trainB_path = trainB_path
+        self.img_shape = img_shape
+        self.nr_of_channels = nr_of_channels
+        #for image_name in image_list_A:
+        #    if image_name[-1].lower() == 'g':  # to avoid e.g. thumbs.db files
+        #        self.train_A.append(os.path.join(trainA_path, image_name))
+        #for image_name in image_list_B:
+        #    if image_name[-1].lower() == 'g':  # to avoid e.g. thumbs.db files
+        #        self.train_B.append(os.path.join(trainB_path, image_name))
 
     def __len__(self):
         return int(max(len(self.train_A), len(self.train_B)) / float(self.batch_size))
@@ -108,8 +119,8 @@ class data_sequence(Sequence):
             batch_A = self.train_A[idx * self.batch_size:(idx + 1) * self.batch_size]
             batch_B = self.train_B[idx * self.batch_size:(idx + 1) * self.batch_size]
 
-        real_images_A = create_image_array(batch_A, trainA_path, nr_of_channels)
-        real_images_B = create_image_array(batch_B, trainB_path, nr_of_channels)
+        real_images_A = create_image_array(batch_A, self.trainA_path, self.nr_of_channels, self.img_shape)
+        real_images_B = create_image_array(batch_B, self.trainB_path, self.nr_of_channels, self.img_shape)
 
         return real_images_A, real_images_B  # input_data, target_data
 

@@ -24,14 +24,17 @@ import keras.backend as K
 import tensorflow as tf
 import nibabel as nib
 
-import load_data
+import load_crop_data
 
 np.random.seed(seed=12346)
 
 
 class CycleGAN():
-    def __init__(self, lr_D=2e-4, lr_G=2e-4, image_shape=(92, 112, 92, 1), #image_shape=(304, 256, 1),
-                 date_time_string_addition='', image_folder='MR_3D50'):
+    #def __init__(self, lr_D=2e-4, lr_G=2e-4, image_shape=(104, 124, 104, 1), #image_shape=(304, 256, 1),
+    #def __init__(self, lr_D=2e-4, lr_G=2e-4, image_shape=(92, 112, 92, 1), #image_shape=(304, 256, 1),
+    #def __init__(self, lr_D=2e-4, lr_G=2e-4, image_shape=(144, 176, 144, 1), #image_shape=(304, 256, 1),
+    def __init__(self, lr_D=2e-4, lr_G=2e-4, image_shape=(92, 108, 84, 1), #image_shape=(304, 256, 1),
+                 date_time_string_addition='', image_folder='MR_BCP_crop'):
         self.img_shape = image_shape
         self.channels = self.img_shape[-1]
         self.normalization = InstanceNormalization
@@ -72,7 +75,7 @@ class CycleGAN():
         self.supervised_weight = 40.0
 
         # Fetch data during training instead of pre caching all images - might be necessary for large datasets
-        self.use_data_generator = False
+        self.use_data_generator = True
 
         # Tweaks
         self.REAL_LABEL = 1.0  # Use e.g. 0.9 to avoid training the discriminators to zero loss
@@ -84,96 +87,6 @@ class CycleGAN():
         self.opt_D = Adam(self.learning_rate_D, self.beta_1, self.beta_2)
         self.opt_G = Adam(self.learning_rate_G, self.beta_1, self.beta_2)
 
-        # ======= Discriminator model ==========
-        if self.use_multiscale_discriminator:
-            D_A = self.modelMultiScaleDiscriminator()
-            D_B = self.modelMultiScaleDiscriminator()
-            loss_weights_D = [0.5, 0.5] # 0.5 since we train on real and synthetic images
-        else:
-            D_A = self.modelDiscriminator()
-            D_B = self.modelDiscriminator()
-            loss_weights_D = [0.5]  # 0.5 since we train on real and synthetic images
-        D_A.summary()
-
-        # Discriminator builds
-        image_A = Input(shape=self.img_shape)
-        image_B = Input(shape=self.img_shape)
-        guess_A = D_A(image_A)
-        guess_B = D_B(image_B)
-        self.D_A = Model(inputs=image_A, outputs=guess_A, name='D_A_model')
-        self.D_B = Model(inputs=image_B, outputs=guess_B, name='D_B_model')
-
-        #self.D_A.summary()
-        #self.D_B.summary()
-        self.D_A.compile(optimizer=self.opt_D,
-                         loss=self.lse,
-                         loss_weights=loss_weights_D)
-        self.D_B.compile(optimizer=self.opt_D,
-                         loss=self.lse,
-                         loss_weights=loss_weights_D)
-
-        # Use containers to avoid falsy keras error about weight descripancies
-        self.D_A_static = Container(inputs=image_A, outputs=guess_A, name='D_A_static_model')
-        self.D_B_static = Container(inputs=image_B, outputs=guess_B, name='D_B_static_model')
-
-        # ======= Generator model ==========
-        # Do note update discriminator weights during generator training
-        self.D_A_static.trainable = False
-        self.D_B_static.trainable = False
-
-        # Generators
-        self.G_A2B = self.modelGenerator(name='G_A2B_model')
-        self.G_B2A = self.modelGenerator(name='G_B2A_model')
-        self.G_A2B.summary()
-        self.G_B2A.summary()
-
-        if self.use_identity_learning:
-            self.G_A2B.compile(optimizer=self.opt_G, loss='MAE')
-            self.G_B2A.compile(optimizer=self.opt_G, loss='MAE')
-
-        # Generator builds
-        real_A = Input(shape=self.img_shape, name='real_A')
-        real_B = Input(shape=self.img_shape, name='real_B')
-        synthetic_B = self.G_A2B(real_A)
-        synthetic_A = self.G_B2A(real_B)
-        dA_guess_synthetic = self.D_A_static(synthetic_A)
-        dB_guess_synthetic = self.D_B_static(synthetic_B)
-        reconstructed_A = self.G_B2A(synthetic_B)
-        reconstructed_B = self.G_A2B(synthetic_A)
-
-        model_outputs = [reconstructed_A, reconstructed_B]
-        compile_losses = [self.cycle_loss, self.cycle_loss,
-                          self.lse, self.lse]
-        compile_weights = [self.lambda_1, self.lambda_2,
-                           self.lambda_D, self.lambda_D]
-
-        if self.use_multiscale_discriminator:
-            for _ in range(2):
-                compile_losses.append(self.lse)
-                compile_weights.append(self.lambda_D)  # * 1e-3)  # Lower weight to regularize the model
-            for i in range(2):
-                model_outputs.append(dA_guess_synthetic[i])
-                model_outputs.append(dB_guess_synthetic[i])
-        else:
-            model_outputs.append(dA_guess_synthetic)
-            model_outputs.append(dB_guess_synthetic)
-
-        if self.use_supervised_learning:
-            model_outputs.append(synthetic_A)
-            model_outputs.append(synthetic_B)
-            compile_losses.append('MAE')
-            compile_losses.append('MAE')
-            compile_weights.append(self.supervised_weight)
-            compile_weights.append(self.supervised_weight)
-
-        self.G_model = Model(inputs=[real_A, real_B],
-                             outputs=model_outputs,
-                             name='G_model')
-
-        self.G_model.compile(optimizer=self.opt_G,
-                             loss=compile_losses,
-                             loss_weights=compile_weights)
-        self.G_A2B.summary()
 
         # ======= Data ==========
         # Use 'None' to fetch all available images
@@ -182,29 +95,32 @@ class CycleGAN():
         nr_A_test_imgs = None
         nr_B_test_imgs = None
 
-        if self.use_data_generator:
-            print('--- Using dataloader during training ---')
-        else:
-            print('--- Caching data ---')
-        sys.stdout.flush()
 
         if self.use_data_generator:
-            self.data_generator = load_data.load_data(
-                nr_of_channels=self.batch_size, generator=True, subfolder=image_folder)
+            print('--- Using dataloader during training ---')
+
+            #self.data_generator = load_data.load_data(
+            #    nr_of_channels=self.batch_size, generator=True, subfolder=image_folder)
             
-            self.data_generator = load_data.load_data(nr_of_channels=self.channels,
+            self.data_generator = load_crop_data.load_data(self.img_shape,
+                                       nr_of_channels=self.channels,
                                        batch_size=self.batch_size,
                                        nr_A_train_imgs=nr_A_train_imgs,
                                        nr_B_train_imgs=nr_B_train_imgs,
                                        nr_A_test_imgs=nr_A_test_imgs,
                                        nr_B_test_imgs=nr_B_test_imgs,
+                                       generator=True,
                                        subfolder=image_folder)
 
             # Only store test images
             nr_A_train_imgs = 0
             nr_B_train_imgs = 0
 
-        data = load_data.load_data(nr_of_channels=self.channels,
+        else:
+            print('--- Caching data ---')
+
+        data = load_crop_data.load_data(img_shape=self.img_shape,
+                                   nr_of_channels=self.channels,
                                    batch_size=self.batch_size,
                                    nr_A_train_imgs=nr_A_train_imgs,
                                    nr_B_train_imgs=nr_B_train_imgs,
@@ -226,8 +142,107 @@ class CycleGAN():
         self.B_test = data["test_B_images"]
         self.testA_image_names = data["test_A_image_names"]
         self.testB_image_names = data["test_B_image_names"]
-        if not self.use_data_generator:
-            print('Data has been loaded')
+
+        print('Data has been loaded')
+        sys.stdout.flush() 
+
+
+        # Set up parallel processing
+        strategy = tf.contrib.distribute.MirroredStrategy()
+        with strategy.scope():
+
+            # ======= Discriminator model ==========
+            if self.use_multiscale_discriminator:
+                D_A = self.modelMultiScaleDiscriminator()
+                D_B = self.modelMultiScaleDiscriminator()
+                loss_weights_D = [0.5, 0.5] # 0.5 since we train on real and synthetic images
+            else:
+                D_A = self.modelDiscriminator()
+                D_B = self.modelDiscriminator()
+                loss_weights_D = [0.5]  # 0.5 since we train on real and synthetic images
+            D_A.summary()
+
+            # Discriminator builds
+            image_A = Input(shape=self.img_shape)
+            image_B = Input(shape=self.img_shape)
+            guess_A = D_A(image_A)
+            guess_B = D_B(image_B)
+            self.D_A = Model(inputs=image_A, outputs=guess_A, name='D_A_model')
+            self.D_B = Model(inputs=image_B, outputs=guess_B, name='D_B_model')
+
+            #self.D_A.summary()
+            #self.D_B.summary()
+            self.D_A.compile(optimizer=self.opt_D,
+                             loss=self.lse,
+                             loss_weights=loss_weights_D)
+            self.D_B.compile(optimizer=self.opt_D,
+                             loss=self.lse,
+                             loss_weights=loss_weights_D)
+
+            # Use containers to avoid falsy keras error about weight descripancies
+            self.D_A_static = Container(inputs=image_A, outputs=guess_A, name='D_A_static_model')
+            self.D_B_static = Container(inputs=image_B, outputs=guess_B, name='D_B_static_model')
+
+            # ======= Generator model ==========
+            # Do note update discriminator weights during generator training
+            self.D_A_static.trainable = False
+            self.D_B_static.trainable = False
+
+            # Generators
+            self.G_A2B = self.modelGenerator(name='G_A2B_model')
+            self.G_B2A = self.modelGenerator(name='G_B2A_model')
+            self.G_A2B.summary()
+            self.G_B2A.summary()
+
+            if self.use_identity_learning:
+                self.G_A2B.compile(optimizer=self.opt_G, loss='MAE')
+                self.G_B2A.compile(optimizer=self.opt_G, loss='MAE')
+
+            # Generator builds
+            real_A = Input(shape=self.img_shape, name='real_A')
+            real_B = Input(shape=self.img_shape, name='real_B')
+            synthetic_B = self.G_A2B(real_A)
+            synthetic_A = self.G_B2A(real_B)
+            dA_guess_synthetic = self.D_A_static(synthetic_A)
+            dB_guess_synthetic = self.D_B_static(synthetic_B)
+            reconstructed_A = self.G_B2A(synthetic_B)
+            reconstructed_B = self.G_A2B(synthetic_A)
+
+            model_outputs = [reconstructed_A, reconstructed_B]
+            compile_losses = [self.cycle_loss, self.cycle_loss,
+                              self.lse, self.lse]
+            compile_weights = [self.lambda_1, self.lambda_2,
+                               self.lambda_D, self.lambda_D]
+
+            if self.use_multiscale_discriminator:
+                for _ in range(2):
+                    compile_losses.append(self.lse)
+                    compile_weights.append(self.lambda_D)  # * 1e-3)  # Lower weight to regularize the model
+                for i in range(2):
+                    model_outputs.append(dA_guess_synthetic[i])
+                    model_outputs.append(dB_guess_synthetic[i])
+            else:
+                model_outputs.append(dA_guess_synthetic)
+                model_outputs.append(dB_guess_synthetic)
+
+            if self.use_supervised_learning:
+                model_outputs.append(synthetic_A)
+                model_outputs.append(synthetic_B)
+                compile_losses.append('MAE')
+                compile_losses.append('MAE')
+                compile_weights.append(self.supervised_weight)
+                compile_weights.append(self.supervised_weight)
+
+            self.G_model = Model(inputs=[real_A, real_B],
+                                 outputs=model_outputs,
+                                 name='G_model')
+
+            self.G_model.compile(optimizer=self.opt_G,
+                                 loss=compile_losses,
+                                 loss_weights=compile_weights)
+            self.G_A2B.summary()
+
+
 
         # ======= Create designated run folder and store meta data ==========
         directory = os.path.join('images', self.date_time)
@@ -332,7 +347,7 @@ class CycleGAN():
         # Layer 3
         x = self.ck(x, 256, True, 2)
         # Layer 4
-        x = self.ck(x, 512, True, 1)
+        #x = self.ck(x, 512, True, 1)
         # Output layer
         if self.use_patchgan:
             x = Conv3D(filters=1, kernel_size=4, strides=1, padding='same')(x)
@@ -351,6 +366,7 @@ class CycleGAN():
         # Layer 2
         x = self.dk(x, 128)
         # Layer 3
+        #x = self.dk(x, 128)
         x = self.dk(x, 256)
 
         if self.use_multiscale_discriminator:
@@ -358,15 +374,16 @@ class CycleGAN():
             x = self.dk(x, 512)
 
         # Layer 4-12: Residual layer
-        for _ in range(4, 13):
+        for _ in range(4, 12):
             x = self.Rk(x)
 
         if self.use_multiscale_discriminator:
             # Layer 12.5
-            x = self.uk(x, 128)
+            x = self.uk(x, 64)
 
         # Layer 13
         x = self.uk(x, 128)
+        #x = self.uk(x, 64)
         # Layer 14
         x = self.uk(x, 64)
         x = ReflectionPadding3D((3, 3, 3))(x)
@@ -560,10 +577,10 @@ class CycleGAN():
             if self.use_data_generator:
                 loop_index = 1
                 for images in self.data_generator:
-                    print(images)
+                    #print(images.shape)
                     real_images_A = images[0]
                     real_images_B = images[1]
-                    print(real_images_A)
+                    print(real_images_A.shape)
                     if len(real_images_A.shape) == 3:
                         real_images_A = real_images_A[:, :, :, np.newaxis]
                         real_images_B = real_images_B[:, :, :, np.newaxis]
