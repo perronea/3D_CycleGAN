@@ -55,8 +55,8 @@ def main(args):
     S_synth_dir = os.path.join(args.wd, 'synthetic_images', gen_mod, 'S')
     
     neurosplitter.compose(T_synth_dir, img_aff, 'T', (dim1,dim2))
-    neurosplitter.compose(C_synth_dir, img_aff, 'C', (dim2,dim3))
-    neurosplitter.compose(S_synth_dir, img_aff, 'S', (dim1,dim3))
+    neurosplitter.compose(C_synth_dir, img_aff, 'C', (dim1,dim3))
+    neurosplitter.compose(S_synth_dir, img_aff, 'S', (dim2,dim3))
 
     # Combining the generated NIfTIs and apply post-processing
     temp_dir = os.path.join(args.wd, 'temp')
